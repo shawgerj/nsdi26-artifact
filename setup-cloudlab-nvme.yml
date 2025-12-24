@@ -1,0 +1,195 @@
+- name: Cloudlab TiKV-XLL
+  hosts: all
+  connection: ssh
+  gather_facts: true
+  remote_user: shawgerj
+  become: yes
+  environment:
+    PATH: /users/{{ ansible_user }}/.cargo/bin:/usr/local/go/bin:{{ ansible_env.PATH }}
+  vars:
+    defaultuser: "{{ ansible_user }}"
+  tasks:
+    - name: Update and upgrade the system
+      apt:
+        update_cache: yes
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - git
+          - build-essential
+          - cmake
+          - llvm
+          - libclang-dev
+          - curl
+          - libtbb-dev
+          - python3-pip
+          - libsnappy-dev
+          - screen
+        state: present
+        
+    - name: Check Rust installation
+      become: no
+      shell: command -v cargo
+      register: rust_check
+      ignore_errors: yes
+    - name: Download rust
+      become: no
+      when: rust_check is failed
+      get_url:
+        url: https://sh.rustup.rs
+        dest: /tmp/sh.rustup.rs
+        mode: '0755'
+        force: 'yes'
+      tags:
+        - rust
+    - name: Install Rust/Cargo
+      become: no
+      when: rust_check is failed
+      shell: /tmp/sh.rustup.rs -y
+      tags:
+        - rust
+
+    - name: Add Rust to shell PATH
+      become: no
+      ansible.builtin.lineinfile:
+        path: ~/.bashrc
+        line: 'export PATH="$HOME/.cargo/bin:$PATH"'
+        insertafter: EOF
+        state: present
+        
+    - name: Check Go installation
+      become: no
+      ansible.builtin.command: go version
+      register: go_check
+      ignore_errors: yes
+      changed_when: false
+    - name: Install Go
+      ansible.builtin.shell: |
+        curl -fsSL https://go.dev/dl/go1.23.5.linux-amd64.tar.gz | tar -C /usr/local -xz
+      args:
+        creates: /usr/local/go/bin/go
+      when: go_check.rc != 0
+    - name: Add Go to PATH
+      become: no
+      ansible.builtin.lineinfile:
+        path: ~/.bashrc
+        line: 'export PATH="/usr/local/go/bin:$PATH"'
+        insertafter: EOF
+        state: present
+
+    # new partition for /mnt/data. Edit accordingly.
+    #    - name: Setup data partition
+    #      community.general.parted:
+    #        device: /dev/nvme1n1
+    #        number: 1
+    #        state: present
+    #        fs_type: ext4
+    #        part_end: 100%
+    #    - name: Format data partition
+    #      filesystem:
+    #        fstype: ext4
+    #        dev: /dev/nvme1n1p1
+    #    - name: Create mountpoint
+    #      file:
+    #        path: /mnt/data
+    #        state: directory
+    #    - name: Mount the partition
+    #      mount:
+    #        path: /mnt/data
+    #        src: /dev/nvme1n1p1
+    #        fstype: ext4
+    #        state: mounted
+    #    - name: Preseve mountpoint in fstab
+    #      lineinfile:
+    #        path: /etc/fstab
+    #        line: "/dev/nvme1n1p1 /mnt/data ext4 defaults 0 2"
+    #        create: yes
+    #    - name: Change /mnt/data ownership to user
+    #      file:
+    #        path: /mnt/data
+    #        owner: "shawgerj"
+    #        recurse: true
+
+    - name: Create software dir
+      file:
+        path: /software
+        state: directory
+    - name: Change ownership of /software
+      file:
+        path: /software
+        owner: "{{ defaultuser }}"
+        recurse: true
+
+    # on cloudlab it is handy to copy ssh keys to all the nodes
+    # - name: Copy SSH private key
+    #   become: no
+    #   ansible.builtin.copy:
+    #     src: "~/.ssh/id_ed25519"
+    #     dest: "/users/<USER>/.ssh/id_ed25519"
+    #     mode: '0600'
+    #     owner: "<USER>"
+    # - name: Copy SSH public key
+    #   become: no
+    #   ansible.builtin.copy:
+    #     src: "~/.ssh/id_ed25519.pub"
+    #     dest: "/users/<USER>/.ssh/id_ed25519.pub"
+    #     mode: '0644'
+    #     owner: "<USER>"
+
+
+    - name: Clone TiKV
+      become: no
+      git:
+        repo: "http://github.com/shawgerj/xll.git"
+        dest: "/software/tikv-xll"
+        version: "tikv-xll"
+    - name: Clone rust-rocksdb
+      become: no
+      git:
+        repo: "http://github.com/shawgerj/rust-rocksdb-1.git"
+        dest: "/software/rust-rocksdb-1"
+        version: "xll"
+    - name: Clone PD
+      become: no
+      git:
+        repo: "https://github.com/tikv/pd.git"
+        dest: "/software/pd"
+        version: "release-5.4"
+    - name: Clone go-ycsb
+      become: no
+      git:
+        repo: "https://github.com/pingcap/go-ycsb.git"
+        dest: "/software/go-ycsb"
+        version: "master"
+    - name: git submodules rust-rocksdb
+      become: no
+      command:
+        chdir: "/software/rust-rocksdb-1"
+        cmd: "git submodule update --init --recursive"
+    - name: Build go-ycsb
+      become: no
+      command:
+        chdir: "/software/go-ycsb"
+        cmd: "make"
+      args:
+        creates: "/software/go-ycsb/bin/go-ycsb"
+    - name: Build PD
+      become: no
+      command:
+        chdir: "/software/pd"
+        cmd: "make"
+      args:
+        creates: /software/pd/bin/pd-server
+    - name: Build TiKV
+      become: no
+      command:
+        chdir: "/software/tikv-xll"
+        cmd: "cargo build --release"
+      args:
+        creates: /software/tikv-xll/target/release/tikv-server
+    - name: Install pip fabric
+      become: no
+      command:
+        cmd: "pip install fabric"
+      

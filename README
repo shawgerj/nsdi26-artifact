@@ -1,0 +1,148 @@
+Below are instructions to run TiKV-XLL as described in our NSDI 2026
+paper "XLL: Cross-Layer Logging for Data Deduplication in
+Consensus-Based Storage."
+
+Step 0 - System requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The published setup scripts assume a cluster of five Cloudlab c6615
+(Clemson) nodes running Ubuntu 22.04. We expect the artifact to run on
+other Linux distributions, however, different compiler versions could
+result in build errors when compiling the project.
+
+We assume two NVMe devices at /dev/nvme0n1 and /dev/nvme1n1. On
+Cloudlab, one of these disks holds the OS, home directory, etc., and
+the other is empty. On the empty drive, we create a partition mounted
+to /mnt/data to hold the files written by TiKV (i.e., all the
+key-value data).
+
+Two disks are not necessary to run the artifact, but please edit the
+ansible script accordingly if using a different configuration. The
+experiment script expects data to be stored at /mnt/data, and required
+software (TiKV, go-ycsb) to be stored in /software. If you change this
+for some reason, be sure to edit the experiment script too!
+
+If using ansible, the list of node hostnames in the experiment should
+be in inventory.yml. The ansible playbook installs all client and
+server software to each host in the experiment. If you don't wish to 
+use ansible, read through the script to see which dependencies are
+needed to run the artifact.
+
+Step 1 - Set up
+~~~~~~~~~~~~~~~
+
+We provide an ansible playbook to install required dependencies,
+download artifact repos, and configure TiKV-XLL and client nodes.
+
+A couple sections of the playbook are commented out (creating a new
+partition for /mnt/data and copying ssh keys). Edit and uncomment
+according to your needs.
+
+To run the playbook:
+
+ansible-playbook -i inventory.yml setup-cloudlab-nvme.yml
+
+Ansible will clone artifact repositories from github. Because the
+artifact is very large, with several dependencies, it was not 
+feasible to package the artifact in a single repository.
+
+Step 2 - TiKV, XLL-SO, and XLL
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The three main versions of TiKV evaluated in the paper are available
+as separate branches of the xll github repository:
+- "master": Baseline TiKV 5.4.3 with no additional modifications.
+- "tikv-xll-so": "Separation Only" stores data payloads in two XLL instances.
+- "tikv-xll": stores data payloads in a single "deduplicated" XLL instance.
+
+We also include branches "tikv-xll-gc", which has the XLL garbage collector
+and "tikv-xll-slow-read" which omits the read optimization described in the
+paper.
+
+To evaluate a particular version:
+- git checkout <branch>
+- cargo build --release
+- run experiment script (see Step 3)
+
+Step 3 - Running Experiments
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The experiment script tikv-ycsb.py:
+- starts TiKV and PD services on storage nodes.
+- runs go-ycsb, the benchmark program on the client nodes.
+- gathers output and shuts down TiKV and PD services once finished.
+
+As an example, this invocation runs the complete set of ycsb workloads
+using tikv-ycsb.py:
+
+./tikv-ycsb.py --tikv_nodes 10.10.1.2,10.10.1.3,10.10.1.4 --pd_node 10.10.1.1 \
+--client_node 10.10.1.5 -s $((100 * 1024 * 1024 * 1024)) -v 16384 \
+--workloads a,b,c,d,e,f --name tikv-ycsb --experimenttype ycsb
+
+The script accepts a comma separated list of TiKV hosts, a PD node,
+and a comma separated list of client nodes. A complete list of flags
+and arguments can be found in the python script. This example loads
+the key-value store with 100GB of data using 16KB values and runs YCSB
+workloads A, B, C, D, E, F in that order. Most of the YCSB experiments
+should be run with --experimenttime ycsb.
+
+If you pass --threadsmin and --threads as arguments to tikv-ycsb.py,
+the script will run the workloads over an increasing range of
+threads. This is used for scalability workloads. If more than one
+client node is given, equal proportions of threads will be run on each
+client. For write scalability experiments, use `--experimenttype
+writescalability`, since these experiments should start with a clean
+DB each time. For read scalability experiments, use `--experimenttype
+ycsb` and `--workloads c`.
+
+tikv-ycsb.py creates an output directory with this naming convention:
+    <name>-<dbsize>-<valuesize>
+Names themselves are arbitrary, but our graphing scripts expect names 
+to be formatted like this.
+
+We generally use <dbtype>-<experiment> for the name. For example, to 
+evaluate YCSB on all three systems, you would use names "tikv-ycsb", 
+"xllso-ycsb", and "xll-ycsb". The example above creates a directory
+named "tikv-ycsb-100GB-16KB". 
+
+Step 4 - Understanding Results
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+tikv-ycsb.py stores all output in a `results/` directory. Output from
+each experiment is copied to a subdirectory of `results/`. The name of
+the subdirectory is a combination of the experiment name, DB size, and
+value size. The numbered directories (0/, 1/, 2/) store per-node output
+like stdout logs and TiKV metrics. The .ycsb files are client go-ycsb 
+logs. YCSB data is taken from the end summary of each ycsb log.
+
+Note: we changed the name of the layer-deduplicated version of TiKV at
+some point from "wotr" to "XLL". Therefore, you might see "wotr"
+mentioned in some of scripts or source code. "wotr" and "XLL" are the 
+same thing, it is simply a name change.
+
+Figure 7 is generated from fine-grained metrics captured at the end of
+an experiment. plotting/waterfall-data.py produces Figure
+7. The experiment names in the python script should match the names of
+directories in the results folder created by tikv-ycsb.py.
+
+Figures 8-12 are all YCSB workloads, thus the experiments should be
+run with tikv-ycsb.py. The graphs can be produced with scripts in
+plotting/. Unfortunately the graphing scripts are fragile with respect
+to experiment names. We've added some comments at the top of each 
+script to clarify the expected experiment names so the graphs can be
+reproduced more easily.
+
+The graphing scripts store intermediate data in *.dat files and produce
+pdf output in ../graphs. See `common.sh` for more detail if needed.
+
+Step 5 - LPFS Experiments (Figures 14-16)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+LPFS is included in the archive lpfs-artifact.tar.gz. Untar the
+archive and follow instructions in the README to compile LPFS. The
+README includes instructions for running the experiments in the paper.
+
+If you wish to mount LPFS manually, follow the example in the
+experiment script to mount the FUSE filesystem. LPFS is not a
+production filesystem, thus some FUSE callbacks are missing. It has
+enough functionality to run LevelDB.

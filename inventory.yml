@@ -1,0 +1,7 @@
+dedup:
+  hosts:
+    dedup0:
+    dedup1:
+    dedup2:
+    dedup3:
+    dedup4:
