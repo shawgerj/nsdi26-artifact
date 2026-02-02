@@ -5,38 +5,48 @@ Consensus-Based Storage."
 Step 0 - System requirements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The published setup scripts assume a cluster of five Cloudlab c6615
+The published setup scripts assume a cluster of five Cloudlab r6615
 (Clemson) nodes running Ubuntu 22.04. We expect the artifact to run on
 other Linux distributions, however, different compiler versions could
 result in build errors when compiling the project.
 
-We assume two NVMe devices at /dev/nvme0n1 and /dev/nvme1n1. On
-Cloudlab, one of these disks holds the OS, home directory, etc., and
-the other is empty. On the empty drive, we create a partition mounted
-to /mnt/data to hold the files written by TiKV (i.e., all the
-key-value data).
+The hardware configuration used in the paper is:
+- Two NVMe devices, /dev/nvme0n1 and /dev/nvme1n1.
+- /dev/nvme1n1 is an empty disk on r6615 machines.
+- We create an ext4 partition on /dev/nvme1n1 mounted to /mnt/data to
+  hold experimental data (key-value data written by TiKV).
 
-Two disks are not necessary to run the artifact, but please edit the
-ansible script accordingly if using a different configuration. The
-experiment script expects data to be stored at /mnt/data, and required
-software (TiKV, go-ycsb) to be stored in /software. If you change this
-for some reason, be sure to edit the experiment script too!
+Other configurations are acceptable -- for example two NVMe disks are
+not necessary to run the artifact.
 
-If using ansible, the list of node hostnames in the experiment should
-be in inventory.yml. The ansible playbook installs all client and
-server software to each host in the experiment. If you don't wish to 
-use ansible, read through the script to see which dependencies are
-needed to run the artifact.
+The ansible setup script (see Step 1) has commented sections which can
+be used to create disk partitions and copy ssh keys to the experiment
+hosts. These should be edited appropriately and uncommented before
+running the script.
+
+To run the ansible script in Step 1, you will need to install
+ansible-playbook on a "control node" (i.e., personal computer). The
+script will install all the software for the experiments on a set of
+"managed nodes" in the experiment (i.e., cloudlab hosts). Thus, the
+list of node hostnames (or, ssh targets) in the experiment should be
+in inventory.yml. These could be actual hostnames or nicknames defined
+in ~/.ssh/config.
+
+See the following links for further instruction on installing ansible
+and writing the inventory.yml file.
+- https://docs.ansible.com/projects/ansible/latest/installation_guide/index.html
+- https://docs.ansible.com/projects/ansible/latest/inventory_guide/index.html
+
+If you don't wish to use ansible, read through the script to see which
+dependencies are needed to run the artifact. You will need to install
+them manually if not using the script.
 
 Step 1 - Set up
 ~~~~~~~~~~~~~~~
 
 We provide an ansible playbook to install required dependencies,
-download artifact repos, and configure TiKV-XLL and client nodes.
-
-A couple sections of the playbook are commented out (creating a new
-partition for /mnt/data and copying ssh keys). Edit and uncomment
-according to your needs.
+download artifact repos, and configure TiKV-XLL and client
+nodes. Requirements to run the script are listed above in Step 0.
 
 To run the playbook:
 
