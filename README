@@ -48,6 +48,9 @@ We provide an ansible playbook to install required dependencies,
 download artifact repos, and configure TiKV-XLL and client
 nodes. Requirements to run the script are listed above in Step 0.
 
+Since ansible uses ssh to connect to the nodes in the inventory, edit
+remote_user at the beginning of the script before running it.
+
 To run the playbook:
 
 ansible-playbook -i inventory.yml setup-cloudlab-nvme.yml
